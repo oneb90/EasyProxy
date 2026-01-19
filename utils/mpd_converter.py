@@ -139,7 +139,7 @@ class MPDToHLSConverter:
             
             return '\n'.join(lines)
         except Exception as e:
-            logging.error(f"Errore conversione Master Playlist: {e}")
+            logging.error(f"Error converting Master Playlist: {e}")
             return "#EXTM3U\n#EXT-X-ERROR: " + str(e)
 
     def convert_media_playlist(self, manifest_content: str, rep_id: str, proxy_base: str, original_url: str, params: str, clearkey_param: str = None) -> str:
@@ -167,7 +167,7 @@ class MPDToHLSConverter:
                     break
             
             if representation is None:
-                logger.error(f"❌ Representation {rep_id} non trovata nel manifest.")
+                logger.error(f"❌ Representation {rep_id} not found in manifest.")
                 return "#EXTM3U\n#EXT-X-ERROR: Representation not found"
 
             # fMP4 richiede HLS versione 6 o 7, ma per .ts output usiamo v3 per compatibilità
@@ -221,7 +221,7 @@ class MPDToHLSConverter:
                         key_count = len(kids)
                         logger.info(f"🔐 ClearKey enabled - {key_count} key pair(s) for server-side decryption")
                 except Exception as e:
-                    logger.error(f"Errore parsing clearkey_param: {e}")
+                    logger.error(f"Error parsing clearkey_param: {e}")
 
             # --- Check for forced TS extension ---
             # If ext=ts is passed OR default, we force server side logic to remux to TS
@@ -319,16 +319,24 @@ class MPDToHLSConverter:
                         # Calcola TARGETDURATION dal segmento più lungo
                         max_duration = max(seg['duration'] for seg in segments_to_use)
                         
-                        # MEDIA-SEQUENCE deve usare il numero di segmento originale
-                        # per garantire sincronizzazione tra video e audio in stream multi-key
+                        # MEDIA-SEQUENCE deve essere basato sul timestamp del primo segmento
+                        # per garantire che quando il manifest viene ricaricato, il player
+                        # sappia quali segmenti ha già scaricato e quali sono nuovi.
+                        # 
+                        # Per LIVE stream multi-key, calcoliamo la sequenza dal timestamp:
+                        # sequence = first_segment_timestamp / segment_duration (in timescale units)
+                        # Questo garantisce che video e audio abbiano lo stesso MEDIA-SEQUENCE
+                        # anche se hanno timestamp leggermente diversi, perché usiamo il floor.
                         if len(segments_to_use) > 0:
-                            # Usa direttamente il numero del primo segmento
-                            # Questo è consistente tra video e audio perché entrambi usano
-                            # lo stesso startNumber e schema di numerazione del MPD
-                            first_seg_number = segments_to_use[0]['number']
+                            first_seg_time = segments_to_use[0]['time']
+                            segment_duration_ts = segments_to_use[0]['d']  # Duration in timescale units
+                            
+                            # Calcola sequence number basato sul tempo
+                            # Usa floor division per consistenza tra video/audio
+                            media_sequence = first_seg_time // segment_duration_ts
                             
                             lines.append(f'#EXT-X-TARGETDURATION:{int(max_duration) + 1}')
-                            lines.append(f'#EXT-X-MEDIA-SEQUENCE:{first_seg_number}')
+                            lines.append(f'#EXT-X-MEDIA-SEQUENCE:{media_sequence}')
                     else:
                         # VOD: inizia da 0
                         # logger.info(f"🔵 VOD Mode: {len(segments_to_use)} segments")
@@ -410,7 +418,7 @@ class MPDToHLSConverter:
             return playlist_content
 
         except Exception as e:
-            logging.error(f"Errore conversione Media Playlist: {e}")
+            logging.error(f"Error converting Media Playlist: {e}")
             import traceback
             logging.error(traceback.format_exc())
             return "#EXTM3U\n#EXT-X-ERROR: " + str(e)
